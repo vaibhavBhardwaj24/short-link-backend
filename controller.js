@@ -172,50 +172,207 @@ export const getDashboardStats = async (req, res) => {
   }
 };
 
+// export const getLinkStats = async (req, res) => {
+//   try {
+//     const { id } = req.params;
+
+//     const link = await linksModel.findById(id);
+//     if (!link) return res.status(404).json({ error: "Link not found" });
+
+//     const totalClicks = await clicksModel.countDocuments({ linkId: id });
+
+//     const devices = await clicksModel.aggregate([
+//       { $match: { linkId: id } },
+//       {
+//         $group: {
+//           _id: "$deviceType",
+//           count: { $sum: 1 },
+//         },
+//       },
+//     ]);
+
+//     const referrers = await clicksModel.aggregate([
+//       { $match: { linkId: id, referrer: { $exists: true } } },
+//       {
+//         $group: {
+//           _id: "$referrer",
+//           count: { $sum: 1 },
+//         },
+//       },
+//       { $sort: { count: -1 } },
+//       { $limit: 10 },
+//     ]);
+
+//     const timeline = await clicksModel.aggregate([
+//       { $match: { linkId: id } },
+//       {
+//         $group: {
+//           _id: {
+//             $dateToString: { format: "%Y-%m-%d", date: "$createdAt" },
+//           },
+//           count: { $sum: 1 },
+//         },
+//       },
+//       { $sort: { _id: 1 } },
+//       { $limit: 30 },
+//     ]);
+
+//     res.status(200).json({
+//       success: true,
+//       data: {
+//         link: {
+//           id: link._id,
+//           originalURL: link.originalURL,
+//           alias: link.alias,
+//           createdAt: link.createdAt,
+//           expiresAt: link.expDate,
+//         },
+//         clicks: {
+//           total: totalClicks,
+//         },
+//         devices,
+//         referrers,
+//         timeline,
+//       },
+//     });
+//   } catch (error) {
+//     console.error("Link Stats Error:", error);
+//     res.status(500).json({
+//       success: false,
+//       error: "Internal server error",
+//     });
+//   }
+// };
 export const getLinkStats = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const link = await linksModel.findById(id);
+    // Get basic link info
+    const link = await linksModel.findById(id).lean();
     if (!link) return res.status(404).json({ error: "Link not found" });
 
-    const totalClicks = await clicksModel.countDocuments({ linkId: id });
+    // Parallelize all database queries for better performance
+    const [
+      totalClicks,
+      uniqueClicks,
+      devices,
+      browsers,
+      countries,
+      referrers,
+      timeline,
+      hourlyStats,
+      osStats,
+      ispStats,
+    ] = await Promise.all([
+      // Total clicks count
+      clicksModel.countDocuments({ linkId: id }),
 
-    const devices = await clicksModel.aggregate([
-      { $match: { linkId: id } },
-      {
-        $group: {
-          _id: "$deviceType",
-          count: { $sum: 1 },
-        },
-      },
-    ]);
+      // Unique clicks count (based on IP)
+      clicksModel.aggregate([
+        { $match: { linkId: id } },
+        { $group: { _id: "$ipAddress" } },
+        { $count: "uniqueClicks" },
+      ]),
 
-    const referrers = await clicksModel.aggregate([
-      { $match: { linkId: id, referrer: { $exists: true } } },
-      {
-        $group: {
-          _id: "$referrer",
-          count: { $sum: 1 },
-        },
-      },
-      { $sort: { count: -1 } },
-      { $limit: 10 },
-    ]);
+      // Device distribution
+      clicksModel.aggregate([
+        { $match: { linkId: id } },
+        { $group: { _id: "$deviceType", count: { $sum: 1 } } },
+        { $sort: { count: -1 } },
+      ]),
 
-    const timeline = await clicksModel.aggregate([
-      { $match: { linkId: id } },
-      {
-        $group: {
-          _id: {
-            $dateToString: { format: "%Y-%m-%d", date: "$createdAt" },
+      // Browser distribution
+      clicksModel.aggregate([
+        { $match: { linkId: id } },
+        {
+          $group: {
+            _id: {
+              name: "$browser",
+              version: "$browserVersion",
+            },
+            count: { $sum: 1 },
           },
-          count: { $sum: 1 },
         },
-      },
-      { $sort: { _id: 1 } },
-      { $limit: 30 },
+        { $sort: { count: -1 } },
+        { $limit: 10 },
+      ]),
+
+      // Country distribution
+      clicksModel.aggregate([
+        { $match: { linkId: id, country: { $exists: true } } },
+        { $group: { _id: "$country", count: { $sum: 1 } } },
+        { $sort: { count: -1 } },
+        { $limit: 10 },
+      ]),
+
+      // Referrer data
+      clicksModel.aggregate([
+        { $match: { linkId: id, referrer: { $exists: true, $ne: null } } },
+        { $group: { _id: "$referrer", count: { $sum: 1 } } },
+        { $sort: { count: -1 } },
+        { $limit: 10 },
+      ]),
+
+      // Daily timeline (30 days)
+      clicksModel.aggregate([
+        { $match: { linkId: id } },
+        {
+          $group: {
+            _id: {
+              $dateToString: { format: "%Y-%m-%d", date: "$createdAt" },
+            },
+            count: { $sum: 1 },
+          },
+        },
+        { $sort: { _id: 1 } },
+        { $limit: 30 },
+      ]),
+
+      // Hourly distribution
+      clicksModel.aggregate([
+        { $match: { linkId: id } },
+        {
+          $group: {
+            _id: {
+              hour: { $hour: "$createdAt" },
+            },
+            count: { $sum: 1 },
+          },
+        },
+        { $sort: { _id: 1 } },
+      ]),
+
+      // OS distribution
+      clicksModel.aggregate([
+        { $match: { linkId: id } },
+        {
+          $group: {
+            _id: {
+              name: "$os",
+              version: "$osVersion",
+            },
+            count: { $sum: 1 },
+          },
+        },
+        { $sort: { count: -1 } },
+        { $limit: 5 },
+      ]),
+
+      // ISP/Network data (if available)
+      clicksModel.aggregate([
+        { $match: { linkId: id, isp: { $exists: true } } },
+        { $group: { _id: "$isp", count: { $sum: 1 } } },
+        { $sort: { count: -1 } },
+        { $limit: 5 },
+      ]),
     ]);
+
+    // Process the results
+    const uniqueClicksCount = uniqueClicks[0]?.uniqueClicks || 0;
+    const hourlyData = Array(24).fill(0);
+    hourlyStats.forEach((hour) => {
+      hourlyData[hour._id.hour] = hour.count;
+    });
 
     res.status(200).json({
       success: true,
@@ -226,13 +383,40 @@ export const getLinkStats = async (req, res) => {
           alias: link.alias,
           createdAt: link.createdAt,
           expiresAt: link.expDate,
+          shortUrl: `${process.env.BASE_URL || "http://localhost:5000"}/${
+            link._id
+          }`,
         },
         clicks: {
           total: totalClicks,
+          unique: uniqueClicksCount,
+          conversionRate:
+            totalClicks > 0
+              ? Math.round((uniqueClicksCount / totalClicks) * 100)
+              : 0,
         },
-        devices,
-        referrers,
-        timeline,
+        devices: devices.map((d) => ({ type: d._id, count: d.count })),
+        browsers: browsers.map((b) => ({
+          name: b._id.name,
+          version: b._id.version,
+          count: b.count,
+        })),
+        countries: countries.map((c) => ({ name: c._id, count: c.count })),
+        referrers: referrers.map((r) => ({ url: r._id, count: r.count })),
+        timeline: timeline.map((t) => ({ date: t._id, count: t.count })),
+        hourlyTraffic: hourlyData.map((count, hour) => ({
+          hour: `${hour}:00`,
+          count,
+        })),
+        operatingSystems: osStats.map((os) => ({
+          name: os._id.name,
+          version: os._id.version,
+          count: os.count,
+        })),
+        networks: ispStats.map((isp) => ({
+          name: isp._id,
+          count: isp.count,
+        })),
       },
     });
   } catch (error) {
@@ -240,6 +424,10 @@ export const getLinkStats = async (req, res) => {
     res.status(500).json({
       success: false,
       error: "Internal server error",
+      ...(process.env.NODE_ENV === "development" && {
+        details: error.message,
+        stack: error.stack,
+      }),
     });
   }
 };
