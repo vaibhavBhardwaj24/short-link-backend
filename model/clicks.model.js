@@ -32,10 +32,6 @@ const ClickSchema = new mongoose.Schema(
     city: String,
     timezone: String,
     referrer: String,
-    isUnique: {
-      type: Boolean,
-      default: true,
-    },
   },
   {
     timestamps: true,

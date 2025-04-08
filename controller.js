@@ -180,10 +180,6 @@ export const getLinkStats = async (req, res) => {
     if (!link) return res.status(404).json({ error: "Link not found" });
 
     const totalClicks = await clicksModel.countDocuments({ linkId: id });
-    const uniqueClicks = await clicksModel.countDocuments({
-      linkId: id,
-      isUnique: true,
-    });
 
     const devices = await clicksModel.aggregate([
       { $match: { linkId: id } },
@@ -233,7 +229,6 @@ export const getLinkStats = async (req, res) => {
         },
         clicks: {
           total: totalClicks,
-          unique: uniqueClicks,
         },
         devices,
         referrers,
