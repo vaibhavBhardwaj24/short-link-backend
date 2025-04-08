@@ -383,9 +383,10 @@ export const getLinkStats = async (req, res) => {
           alias: link.alias,
           createdAt: link.createdAt,
           expiresAt: link.expDate,
-          shortUrl: `${process.env.BASE_URL || "http://localhost:5000"}/${
-            link._id
-          }`,
+          shortUrl: `${
+            process.env.BASE_URL ||
+            "https://short-link-backend-three.vercel.app"
+          }/${link._id}`,
         },
         clicks: {
           total: totalClicks,
